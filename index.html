@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reading Tracker</title>
+<link rel="icon" href="icon.ico">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="app-header">
+  <button id="wishlistBtn" class="corner-btn" title="Open wishlist">🔖 Wishlist</button>
+  <h1>📚 Reading Tracker</h1>
+  <div class="header-right">
+    <button id="addBooksBtn" class="corner-btn" title="Double-click to add books">+ Add Books</button>
+    <button id="themeToggle" class="icon-btn" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">🌙</button>
+  </div>
+</header>
+
+<main>
+  <p class="shelf-hint">Click a book to open it. Double-click <strong>+ Add Books</strong> to add more.</p>
+  <div class="bookcase">
+    <div class="shelf-board case-ceiling"></div>
+    <div id="shelvesContainer"></div>
+  </div>
+</main>
+
+<!-- Book detail modal -->
+<div class="modal-overlay" id="bookModalOverlay">
+  <div class="modal book-modal">
+    <button class="modal-close" data-close="book" aria-label="Close">✕</button>
+    <h2 id="modalTitle"></h2>
+    <span class="status-badge" id="modalStatusBadge"></span>
+
+    <div class="progress-track"><div class="progress-fill" id="modalProgressFill"></div></div>
+    <div class="progress-label"><span id="modalProgressPct"></span></div>
+
+    <div class="pages-edit">
+      <input type="number" id="modalPagesRead" min="0" title="Pages completed">
+      <span>of</span>
+      <input type="number" id="modalTotalPages" min="1" placeholder="pages" title="Total pages">
+    </div>
+
+    <div class="field">
+      <label for="modalNote">Note</label>
+      <input type="text" id="modalNote" maxlength="200" placeholder="A short note about this book">
+    </div>
+
+    <div class="card-controls">
+      <label class="finished-toggle">
+        <input type="checkbox" id="modalFinished">
+        Finished
+      </label>
+      <select id="modalStatus" class="status-select">
+        <option value="To Read">To Read</option>
+        <option value="Reading">Reading</option>
+        <option value="Finished">Finished</option>
+      </select>
+    </div>
+
+    <button id="modalDeleteBtn" class="danger-btn full-width">Remove book</button>
+  </div>
+</div>
+
+<!-- Add books modal -->
+<div class="modal-overlay" id="addModalOverlay">
+  <div class="modal add-modal">
+    <button class="modal-close" data-close="add" aria-label="Close">✕</button>
+    <h2>Add a book</h2>
+    <form id="addForm" autocomplete="off">
+      <div class="field">
+        <label for="titleInput">Title</label>
+        <input type="text" id="titleInput" placeholder="e.g. The Hobbit" required>
+        <span class="hint" id="lookupHint"></span>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="totalPagesInput">Total pages</label>
+          <input type="number" id="totalPagesInput" min="1" placeholder="auto-filled">
+        </div>
+        <div class="field">
+          <label for="pagesReadInput">Pages completed</label>
+          <input type="number" id="pagesReadInput" min="0" value="0">
+        </div>
+        <div class="field">
+          <label for="statusInput">Status</label>
+          <select id="statusInput">
+            <option value="To Read">To Read</option>
+            <option value="Reading">Reading</option>
+            <option value="Finished">Finished</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="noteInput">Note</label>
+        <input type="text" id="noteInput" placeholder="A short note about this book" maxlength="200">
+      </div>
+
+      <button type="submit" class="primary-btn">+ Add book</button>
+    </form>
+
+    <details id="bulkDetails">
+      <summary>Bulk add from a checklist</summary>
+      <div class="bulk-body">
+        <p class="bulk-help">
+          Paste a markdown checklist, one book per line. Checked lines are added as
+          <strong>Finished</strong>, unchecked lines as <strong>To Read</strong>. Page counts are
+          looked up automatically.
+        </p>
+        <pre class="bulk-example">- [ ] The Hobbit
+- [x] Dune
+- [ ] Project Hail Mary</pre>
+        <textarea id="bulkInput" rows="6" placeholder="- [ ] Book title&#10;- [x] Another book"></textarea>
+        <div class="bulk-actions">
+          <button type="button" id="bulkImportBtn" class="primary-btn">Import list</button>
+          <span class="hint" id="bulkStatus"></span>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- Wishlist modal -->
+<div class="modal-overlay" id="wishlistModalOverlay">
+  <div class="modal wishlist-modal">
+    <button class="modal-close" data-close="wishlist" aria-label="Close">✕</button>
+    <div class="wishlist-header">
+      <h2>Wishlist</h2>
+      <button type="button" id="wishlistBulkToggle" class="ghost-btn">Bulk add</button>
+    </div>
+
+    <div class="bulk-body" id="wishlistBulk" hidden>
+      <p class="bulk-help">Paste a list of titles, one per line.</p>
+      <textarea id="wishlistBulkInput" rows="5" placeholder="The Hobbit&#10;Dune&#10;Project Hail Mary"></textarea>
+      <div class="bulk-actions">
+        <button type="button" id="wishlistBulkImportBtn" class="primary-btn">Import list</button>
+        <span class="hint" id="wishlistBulkStatus"></span>
+      </div>
+    </div>
+
+    <form id="wishlistAddForm" class="wishlist-add-form">
+      <input type="text" id="wishlistTitleInput" placeholder="Add a book to your wishlist" required>
+      <button type="submit" class="primary-btn">+ Add</button>
+    </form>
+
+    <ul class="wishlist-list" id="wishlistList"></ul>
+    <p class="empty-state" id="wishlistEmpty">Your wishlist is empty.</p>
+  </div>
+</div>
+
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <p id="confirmMessage">Remove this book?</p>
+    <div class="confirm-actions">
+      <button id="confirmCancel" class="ghost-btn">Cancel</button>
+      <button id="confirmOk" class="danger-btn">Remove</button>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
