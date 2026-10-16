@@ -13,6 +13,7 @@
   <button id="wishlistBtn" class="corner-btn" title="Open wishlist">🔖 Wishlist</button>
   <h1>📚 Reading Tracker</h1>
   <div class="header-right">
+    <button id="analyticsBtn" class="corner-btn" title="View reading analytics">📊 Analytics</button>
     <button id="addBooksBtn" class="corner-btn" title="Double-click to add books">+ Add Books</button>
     <button id="themeToggle" class="icon-btn" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">🌙</button>
   </div>
@@ -148,6 +149,16 @@
 
     <ul class="wishlist-list" id="wishlistList"></ul>
     <p class="empty-state" id="wishlistEmpty">Your wishlist is empty.</p>
+  </div>
+</div>
+
+<!-- Analytics modal -->
+<div class="modal-overlay" id="analyticsModalOverlay">
+  <div class="modal analytics-modal">
+    <button class="modal-close" data-close="analytics" aria-label="Close">✕</button>
+    <h2>📊 Reading Analytics</h2>
+    <p class="hint" id="analyticsIntro"></p>
+    <div id="analyticsBody"></div>
   </div>
 </div>
 

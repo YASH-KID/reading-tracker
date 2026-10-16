@@ -1,6 +1,7 @@
 const BOOKS_KEY = "reading-tracker-books";
 const WISHLIST_KEY = "reading-tracker-wishlist";
 const THEME_KEY = "reading-tracker-theme";
+const LOG_KEY = "reading-tracker-log";
 const STATUSES = ["To Read", "Reading", "Finished"];
 
 let books = loadBooks();
@@ -87,6 +88,37 @@ function loadWishlist() {
 
 function saveWishlist() {
   localStorage.setItem(WISHLIST_KEY, JSON.stringify(wishlist));
+}
+
+// Activity log for analytics -- a SEPARATE key so existing book data is never touched.
+// Each entry: { t: timestamp, id: bookId, dp: pages delta, ev: "start" | "finish" | undefined }
+function loadLog() {
+  try {
+    const raw = localStorage.getItem(LOG_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function logChange(book, prevPages, prevStatus) {
+  const dp = (book.pagesRead || 0) - (prevPages || 0);
+  let ev;
+  if (book.status !== prevStatus) {
+    if (book.status === "Finished") ev = "finish";
+    else if (book.status === "Reading" && prevStatus === "To Read") ev = "start";
+  }
+  if (!dp && !ev) return;
+  try {
+    const log = loadLog();
+    const entry = { t: Date.now(), id: book.id, dp };
+    if (ev) entry.ev = ev;
+    log.push(entry);
+    localStorage.setItem(LOG_KEY, JSON.stringify(log));
+  } catch {
+    // analytics logging must never break the app
+  }
 }
 
 function makeId() {
@@ -675,7 +707,10 @@ function refreshBookModal() {
 modalPagesRead.addEventListener("change", () => {
   const book = getBook(currentBookId);
   if (!book) return;
+  const prevPages = book.pagesRead;
+  const prevStatus = book.status;
   book.pagesRead = clampPages(Number(modalPagesRead.value), book.totalPages);
+  logChange(book, prevPages, prevStatus);
   saveBooks();
   refreshBookModal();
 });
@@ -700,12 +735,15 @@ modalNote.addEventListener("change", () => {
 modalFinished.addEventListener("change", () => {
   const book = getBook(currentBookId);
   if (!book) return;
+  const prevPages = book.pagesRead;
+  const prevStatus = book.status;
   if (modalFinished.checked) {
     book.status = "Finished";
     if (book.totalPages) book.pagesRead = book.totalPages;
   } else {
     book.status = "Reading";
   }
+  logChange(book, prevPages, prevStatus);
   saveBooks();
   refreshBookModal();
   renderShelves();
@@ -714,8 +752,11 @@ modalFinished.addEventListener("change", () => {
 modalStatus.addEventListener("change", () => {
   const book = getBook(currentBookId);
   if (!book) return;
+  const prevPages = book.pagesRead;
+  const prevStatus = book.status;
   book.status = modalStatus.value;
   if (book.status === "Finished" && book.totalPages) book.pagesRead = book.totalPages;
+  logChange(book, prevPages, prevStatus);
   saveBooks();
   refreshBookModal();
   renderShelves();
@@ -868,6 +909,7 @@ document.querySelectorAll("[data-close]").forEach((btn) => {
     if (target === "book") closeBookModal();
     if (target === "add") closeOverlay(addModalOverlay);
     if (target === "wishlist") closeOverlay(wishlistModalOverlay);
+    if (target === "analytics") closeOverlay(document.getElementById("analyticsModalOverlay"));
   });
 });
 
@@ -875,7 +917,7 @@ bookModalOverlay.addEventListener("click", (e) => {
   if (e.target === bookModalOverlay) closeBookModal();
 });
 
-[addModalOverlay, wishlistModalOverlay].forEach((overlay) => {
+[addModalOverlay, wishlistModalOverlay, document.getElementById("analyticsModalOverlay")].forEach((overlay) => {
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeOverlay(overlay);
   });
@@ -889,7 +931,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (bookModalOverlay.classList.contains("open")) closeBookModal();
-  [addModalOverlay, wishlistModalOverlay].forEach(closeOverlay);
+  [addModalOverlay, wishlistModalOverlay, document.getElementById("analyticsModalOverlay")].forEach(closeOverlay);
 });
 
 wishlistBtn.addEventListener("click", () => {
@@ -906,6 +948,221 @@ addBooksBtn.addEventListener("click", () => {
 addBooksBtn.addEventListener("dblclick", () => {
   addBooksBtn.classList.remove("hint-shake");
   openOverlay(addModalOverlay);
+});
+
+// ---------- Analytics ----------
+
+const analyticsModalOverlay = document.getElementById("analyticsModalOverlay");
+const analyticsBody = document.getElementById("analyticsBody");
+const analyticsIntro = document.getElementById("analyticsIntro");
+const DAY_MS = 86400000;
+
+function dayKey(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function startOfDay(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function fmtNum(n) {
+  return Math.round(n).toLocaleString();
+}
+
+function anSection(title, html, note) {
+  return `<section class="an-section"><h3>${title}</h3>${html}${note ? `<p class="an-note">${note}</p>` : ""}</section>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function computeAnalytics() {
+  const log = loadLog();
+  const pagesByDay = {};
+  const finishByMonth = {};
+  for (const e of log) {
+    if (e.dp > 0) pagesByDay[dayKey(e.t)] = (pagesByDay[dayKey(e.t)] || 0) + e.dp;
+    if (e.ev === "finish") {
+      const d = new Date(e.t);
+      const k = `${d.getFullYear()}-${d.getMonth()}`;
+      finishByMonth[k] = (finishByMonth[k] || 0) + 1;
+    }
+  }
+  return { log, pagesByDay, finishByMonth };
+}
+
+function renderAnalytics() {
+  const { log, pagesByDay, finishByMonth } = computeAnalytics();
+  const today = startOfDay(Date.now());
+  const counts = { "To Read": 0, Reading: 0, Finished: 0 };
+  let pagesReadTotal = 0;
+  for (const b of books) {
+    counts[b.status] = (counts[b.status] || 0) + 1;
+    pagesReadTotal += b.pagesRead || 0;
+  }
+  const total = books.length;
+  const sized = books.filter((b) => b.totalPages > 0);
+  let out = "";
+
+  analyticsIntro.textContent = log.length
+    ? `Based on your shelf plus ${log.length} logged reading update${log.length === 1 ? "" : "s"}.`
+    : "Your shelf stats are live now. Time-based charts fill in as you update pages and finish books.";
+
+  // 1. Totals
+  out += anSection("Totals", `<div class="an-cards">
+    <div class="an-card"><div class="an-val">${total}</div><div class="an-lbl">Books on shelf</div></div>
+    <div class="an-card"><div class="an-val">${counts.Finished}</div><div class="an-lbl">Finished</div></div>
+    <div class="an-card"><div class="an-val">${fmtNum(pagesReadTotal)}</div><div class="an-lbl">Pages read</div></div>
+    <div class="an-card"><div class="an-val">${wishlist.length}</div><div class="an-lbl">On wishlist</div></div>
+  </div>`);
+
+  // 2. Status donut
+  const colors = { "To Read": "var(--to-read)", Reading: "var(--reading)", Finished: "var(--finished)" };
+  let donut;
+  if (total === 0) {
+    donut = `<p class="an-note">No books yet.</p>`;
+  } else {
+    const r = 42, c = 2 * Math.PI * r;
+    let offset = 0;
+    const arcs = STATUSES.map((s) => {
+      const len = (counts[s] / total) * c;
+      const arc = `<circle cx="60" cy="60" r="${r}" fill="none" stroke="${colors[s]}" stroke-width="18" stroke-dasharray="${len} ${c - len}" stroke-dashoffset="${-offset}" transform="rotate(-90 60 60)"/>`;
+      offset += len;
+      return arc;
+    }).join("");
+    const legend = STATUSES.map((s) => `<li><i style="background:${colors[s]}"></i>${s}: <strong>${counts[s]}</strong> (${Math.round((counts[s] / total) * 100)}%)</li>`).join("");
+    donut = `<div class="an-donut-row"><svg width="140" height="140" viewBox="0 0 120 120" role="img" aria-label="Books by status">${arcs}</svg><ul class="an-legend">${legend}</ul></div>`;
+  }
+  out += anSection("Books by status", donut);
+
+  // 3. Streak
+  const activeDays = new Set(Object.keys(pagesByDay));
+  let current = 0;
+  const cursor = new Date(today);
+  if (!activeDays.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1); // today not yet read doesn't break it
+  while (activeDays.has(dayKey(cursor))) {
+    current++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  let best = 0, run = 0, prev = null;
+  for (const k of [...activeDays].sort()) {
+    const [y, m, d] = k.split("-").map(Number);
+    const ts = new Date(y, m - 1, d).getTime();
+    run = prev !== null && Math.round((ts - prev) / DAY_MS) === 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = ts;
+  }
+  out += anSection("Reading streak", `<div class="an-cards">
+    <div class="an-card"><div class="an-val">${current} 🔥</div><div class="an-lbl">Current streak (days)</div></div>
+    <div class="an-card"><div class="an-val">${best}</div><div class="an-lbl">Best streak (days)</div></div>
+    <div class="an-card"><div class="an-val">${activeDays.size}</div><div class="an-lbl">Days with reading</div></div>
+  </div>`, "A day counts when you add pages to a book.");
+
+  // 4. Pages last 7 days
+  const week = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    week.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }), v: pagesByDay[dayKey(d)] || 0 });
+  }
+  const weekMax = Math.max(1, ...week.map((w) => w.v));
+  const weekTotal = week.reduce((a, w) => a + w.v, 0);
+  out += anSection("Pages, last 7 days", `<div class="an-bars">${week.map((w) => `<div class="an-bar-col"><span class="an-bar-val">${w.v || ""}</span><div class="an-bar${w.v ? "" : " zero"}" style="height:${Math.max(2, (w.v / weekMax) * 100)}%"></div><span class="an-bar-lbl">${w.label}</span></div>`).join("")}</div>`,
+    `${fmtNum(weekTotal)} pages this week.`);
+
+  // 5. Year heatmap (53 weeks, Sunday-first columns)
+  const start = new Date(today);
+  start.setDate(start.getDate() - 52 * 7 - today.getDay());
+  const cells = [];
+  let maxDay = 1;
+  for (const v of Object.values(pagesByDay)) maxDay = Math.max(maxDay, v);
+  for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+    const v = pagesByDay[dayKey(d)] || 0;
+    const lvl = v === 0 ? "" : v <= maxDay * 0.25 ? "l1" : v <= maxDay * 0.5 ? "l2" : v <= maxDay * 0.75 ? "l3" : "l4";
+    cells.push(`<div class="an-cell ${lvl}" title="${d.toLocaleDateString()}: ${v} pages"></div>`);
+  }
+  out += anSection("Activity over the last year", `<div class="an-heat-wrap"><div class="an-heat">${cells.join("")}</div></div>`, "Darker squares are heavier reading days.");
+
+  // 6. Finished per month (last 12)
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    months.push({ label: d.toLocaleDateString(undefined, { month: "short" }), v: finishByMonth[`${d.getFullYear()}-${d.getMonth()}`] || 0 });
+  }
+  const monthMax = Math.max(1, ...months.map((m) => m.v));
+  const monthTotal = months.reduce((a, m) => a + m.v, 0);
+  out += anSection("Books finished per month", `<div class="an-bars">${months.map((m) => `<div class="an-bar-col"><span class="an-bar-val">${m.v || ""}</span><div class="an-bar${m.v ? "" : " zero"}" style="height:${Math.max(2, (m.v / monthMax) * 100)}%"></div><span class="an-bar-lbl">${m.label}</span></div>`).join("")}</div>`,
+    `${monthTotal} book${monthTotal === 1 ? "" : "s"} finished in the last 12 months (counted from when you mark them finished).`);
+
+  // 7. Average length
+  const avg = sized.length ? sized.reduce((a, b) => a + b.totalPages, 0) / sized.length : 0;
+  const finishedSized = sized.filter((b) => b.status === "Finished");
+  const avgFin = finishedSized.length ? finishedSized.reduce((a, b) => a + b.totalPages, 0) / finishedSized.length : 0;
+  out += anSection("Average book length", `<div class="an-cards">
+    <div class="an-card"><div class="an-val">${sized.length ? fmtNum(avg) : "–"}</div><div class="an-lbl">Pages, whole shelf</div></div>
+    <div class="an-card"><div class="an-val">${finishedSized.length ? fmtNum(avgFin) : "–"}</div><div class="an-lbl">Pages, finished books</div></div>
+    <div class="an-card"><div class="an-val">${fmtNum(sized.reduce((a, b) => a + b.totalPages, 0))}</div><div class="an-lbl">Pages on shelf in total</div></div>
+  </div>`, `${books.length - sized.length} book${books.length - sized.length === 1 ? " has" : "s have"} no page count and ${books.length - sized.length === 1 ? "is" : "are"} left out.`);
+
+  // 8. Longest / shortest
+  let ls = `<p class="an-note">Add page counts to see this.</p>`;
+  if (sized.length) {
+    const sorted = [...sized].sort((a, b) => a.totalPages - b.totalPages);
+    const lo = sorted[0], hi = sorted[sorted.length - 1];
+    ls = `<div class="an-cards">
+      <div class="an-card"><div class="an-val">${fmtNum(hi.totalPages)}</div><div class="an-lbl">Longest: ${escapeHtml(hi.title)}</div></div>
+      <div class="an-card"><div class="an-val">${fmtNum(lo.totalPages)}</div><div class="an-lbl">Shortest: ${escapeHtml(lo.title)}</div></div>
+    </div>`;
+  }
+  out += anSection("Longest and shortest book", ls);
+
+  // 9. Completion rate and backlog
+  const rate = total ? Math.round((counts.Finished / total) * 100) : 0;
+  const backlogBooks = books.filter((b) => b.status === "To Read");
+  const backlogPages = backlogBooks.reduce((a, b) => a + (b.totalPages || 0), 0);
+  out += anSection("Completion and backlog", `<div class="an-meter"><div style="width:${rate}%"></div></div>
+    <div class="an-cards" style="margin-top:10px">
+      <div class="an-card"><div class="an-val">${rate}%</div><div class="an-lbl">Of your shelf finished</div></div>
+      <div class="an-card"><div class="an-val">${backlogBooks.length}</div><div class="an-lbl">Books still to read</div></div>
+      <div class="an-card"><div class="an-val">${fmtNum(backlogPages)}</div><div class="an-lbl">Backlog pages</div></div>
+    </div>`);
+
+  // 10. Pace and ETA
+  const last30 = new Date(today);
+  last30.setDate(last30.getDate() - 29);
+  let pages30 = 0;
+  for (const [k, v] of Object.entries(pagesByDay)) {
+    const [y, m, d] = k.split("-").map(Number);
+    if (new Date(y, m - 1, d) >= last30) pages30 += v;
+  }
+  const firstLog = log.length ? startOfDay(Math.min(...log.map((e) => e.t))) : today;
+  const spanDays = Math.min(30, Math.max(1, Math.round((today - firstLog) / DAY_MS) + 1));
+  const pace = pages30 / spanDays;
+  const remaining = books.filter((b) => b.status === "Reading").reduce((a, b) => a + Math.max(0, (b.totalPages || 0) - (b.pagesRead || 0)), 0);
+  let eta = "Log some reading to see an estimate.";
+  if (pace > 0 && remaining > 0) {
+    const days = Math.ceil(remaining / pace);
+    const date = new Date(today);
+    date.setDate(date.getDate() + days);
+    eta = `At this pace you will finish your current books in about ${days} day${days === 1 ? "" : "s"} (${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}).`;
+  } else if (pace > 0) {
+    eta = "No pages left in books you are currently reading.";
+  }
+  out += anSection("Reading pace", `<div class="an-cards">
+    <div class="an-card"><div class="an-val">${pace ? pace.toFixed(1) : "0"}</div><div class="an-lbl">Pages per day (last 30)</div></div>
+    <div class="an-card"><div class="an-val">${fmtNum(remaining)}</div><div class="an-lbl">Pages left in current reads</div></div>
+  </div>`, eta);
+
+  analyticsBody.innerHTML = out;
+}
+
+document.getElementById("analyticsBtn").addEventListener("click", () => {
+  renderAnalytics();
+  openOverlay(analyticsModalOverlay);
 });
 
 // ---------- Theme ----------

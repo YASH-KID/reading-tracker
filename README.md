@@ -58,6 +58,14 @@ lookup just needs an internet connection at the time you use it).
   page count is looked up automatically).
 - **Delete**: remove a book from its card, or a wishlist entry with its ✕ —
   book removal asks for confirmation first.
+- **Analytics**: click **📊 Analytics** (top-right) for ten stats — totals,
+  books by status (donut), reading streak, pages over the last 7 days, a
+  year-long activity heatmap, books finished per month, average book length,
+  longest/shortest book, completion rate and backlog, and reading pace with
+  an estimated finish date. Shelf stats work on your existing books right
+  away; the time-based charts fill in from the moment you update pages or
+  mark books finished (older books carry no dates). Updates are recorded in a
+  separate `reading-tracker-log` entry, so your books are never modified.
 - **Light/dark mode**: the sun/moon button (top-right) switches between a
   cream/pastel light theme and a premium charcoal-and-gold dark theme. Your
   choice is remembered.
